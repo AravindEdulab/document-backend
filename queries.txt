@@ -1,0 +1,5 @@
+* document type schema
+Query:  create table document_type(id integer primary key AUTOINCREMENT, document_name varchar(250) not null, type varchar(250) not null);
+
+* document fields schema 
+Query: create table document_fields(field_id integer primary key autoincrement, field_name varchar(250) not null);
