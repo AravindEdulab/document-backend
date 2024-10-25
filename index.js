@@ -10,6 +10,7 @@ const dbPath = path.join(__dirname, "edulab-backend.db");
 let db = null;
 
 app.use(express.json());
+app.use(cors());
 
 const initializeDBAndServer = async () => {
   try {
