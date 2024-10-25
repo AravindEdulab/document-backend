@@ -3,6 +3,8 @@ const path = require("path");
 
 const { open } = require("sqlite");
 const sqlite3 = require("sqlite3");
+const cors = require("cors");
+
 const app = express();
 
 const dbPath = path.join(__dirname, "edulab-backend.db");
