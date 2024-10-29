@@ -31,70 +31,10 @@ const initializeDBAndServer = async () => {
 
 initializeDBAndServer();
 
-//fields Array
-const customFields = {
-  Customer: [
-    { field_id: 1, field_name: "id" },
-    { field_id: 2, field_name: "Customer Name" },
-    { field_id: 3, field_name: "Customer Type" },
-    { field_id: 4, field_name: "Customer Address" },
-    { field_id: 5, field_name: "Customer Contact" },
-  ],
-  "Health Care": [
-    { field_id: 1, field_name: "id" },
-    { field_id: 6, field_name: "Patient Name" },
-    { field_id: 7, field_name: "Patient Age" },
-    { field_id: 8, field_name: "Diagnosis" },
-    { field_id: 9, field_name: "Treatment" },
-  ],
-  Users: [
-    { field_id: 1, field_name: "id" },
-    { field_id: 10, field_name: "Username" },
-    { field_id: 11, field_name: "Role" },
-    { field_id: 12, field_name: "Permissions" },
-    { field_id: 13, field_name: "Status" },
-  ],
-  Account: [
-    { field_id: 1, field_name: "id" },
-    { field_id: 14, field_name: "Account Holder" },
-    { field_id: 15, field_name: "Account Number" },
-    { field_id: 16, field_name: "Account Type" },
-    { field_id: 17, field_name: "Balance" },
-  ],
-  "Academic Team": [
-    { field_id: 1, field_name: "id" },
-    { field_id: 18, field_name: "Faculty Name" },
-    { field_id: 19, field_name: "Department" },
-    { field_id: 20, field_name: "Position" },
-    { field_id: 21, field_name: "Years of Experience" },
-  ],
-  "Academic Year": [
-    { field_id: 1, field_name: "id" },
-    { field_id: 22, field_name: "Year" },
-    { field_id: 23, field_name: "Semester" },
-    { field_id: 24, field_name: "Start Date" },
-    { field_id: 25, field_name: "End Date" },
-  ],
-  "Activity Cost": [
-    { field_id: 1, field_name: "id" },
-    { field_id: 26, field_name: "Activity Name" },
-    { field_id: 27, field_name: "Budget" },
-    { field_id: 28, field_name: "Expenses" },
-    { field_id: 29, field_name: "Remaining Funds" },
-  ],
-  "Custom Field": [
-    { field_id: 1, field_name: "id" },
-    { field_id: 30, field_name: "Custom Label" },
-    { field_id: 31, field_name: "Custom Value" },
-    { field_id: 32, field_name: "Category" },
-    { field_id: 33, field_name: "Date Added" },
-  ],
-};
-
 app.get("/document-type", async (req, res) => {
   const getDocumentsQuery = `
-        SELECT * FROM document_type;
-    `;
+    SELECT * FROM document_type;
+  `;
   const docArray = await db.all(getDocumentsQuery);
   res.send(docArray);
 });
@@ -102,48 +42,235 @@ app.get("/document-type", async (req, res) => {
 app.post("/document-type", async (req, res) => {
   const { documentName, type } = req.body;
   const addDocumentQuery = `
-    INSERT INTO document_type (document_name, type) VALUES
-    ('${documentName}','${type}');
-    `;
-  await db.run(addDocumentQuery);
-  res.send("Document Added Successfully");
+    INSERT INTO document_type (document_name, type) 
+    VALUES (?, ?);
+  `;
+  try {
+    await db.run(addDocumentQuery, [documentName, type]);
+    res.send("Document Added Successfully");
+  } catch (error) {
+    res.status(500).json({
+      error: true,
+      message: "Failed to add document",
+      details: error.message,
+    });
+  }
 });
 
 app.get("/document-fields", async (req, res) => {
   const { documentType } = req.query;
 
-  const fieldsForType = customFields[documentType] || [];
-  res.send(fieldsForType);
+  if (!documentType) {
+    return res.status(400).json({
+      error: true,
+      message: "Document type is required",
+    });
+  }
+
+  try {
+    // Convert documentType to table name format (e.g., "Health Care" to "health_care")
+    const tableName = documentType.toLowerCase().replace(/\s+/g, "_");
+
+    // First check if the table exists
+    const tableExists = await db.get(
+      `
+      SELECT name 
+      FROM sqlite_master 
+      WHERE type='table' AND name=?
+    `,
+      [tableName]
+    );
+
+    if (!tableExists) {
+      return res.status(404).json({
+        error: true,
+        message: "Invalid document type",
+      });
+    }
+
+    // Get field information from the table
+    const fieldsQuery = `PRAGMA table_info(${tableName})`;
+    const fields = await db.all(fieldsQuery);
+
+    // Transform the result to match the previous format
+    const formattedFields = fields.map((field) => ({
+      field_id: field.cid + 1, // Adding 1 to match previous format where IDs started at 1
+      field_name: field.name,
+    }));
+
+    res.json(formattedFields);
+  } catch (error) {
+    res.status(500).json({
+      error: true,
+      message: "Failed to fetch document fields",
+      details: error.message,
+    });
+  }
 });
 
-// Endpoint to add fields to a specific document type
-app.post("/document-fields", (req, res) => {
-  const { documentType, field_name } = req.body;
+app.post("/document-fields", async (req, res) => {
+  const { documentType, field_name, field_type } = req.body;
 
-  // Check if both documentType and field_name are provided
-  if (!documentType || !field_name) {
-    return res
-      .status(400)
-      .send("Please provide both documentType and field_name.");
+  if (!documentType || !field_name || !field_type) {
+    return res.status(400).json({
+      error: true,
+      message: "Please provide documentType, field_name, and field_type",
+    });
   }
 
-  // Define a new field with an auto-incremented field_id based on the length of the existing fields
-  const newField = {
-    field_id: customFields[documentType]
-      ? customFields[documentType].length + 1
-      : 1,
-    field_name,
-  };
+  try {
+    const tableName = documentType.toLowerCase().replace(/\s+/g, "_");
 
-  // If the documentType exists, add the new field to the existing array
-  if (customFields[documentType]) {
-    customFields[documentType].push(newField);
-  } else {
-    // If it doesn't exist, create a new array for the document type with the "id" field and the new field
-    customFields[documentType] = [{ field_id: 1, field_name: "id" }, newField];
+    // Check if table exists
+    const tableExists = await db.get(
+      `
+      SELECT name 
+      FROM sqlite_master 
+      WHERE type='table' AND name=?
+    `,
+      [tableName]
+    );
+
+    if (!tableExists) {
+      return res.status(404).json({
+        error: true,
+        message: "Invalid document type",
+      });
+    }
+
+    // Add the new column to the table
+    const alterTableQuery = `ALTER TABLE ${tableName} ADD COLUMN ${field_name} ${field_type}`;
+    await db.run(alterTableQuery);
+
+    res.json({
+      error: false,
+      message: `Field "${field_name}" added successfully to document type "${documentType}"`,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: true,
+      message: "Failed to add field",
+      details: error.message,
+    });
+  }
+});
+
+app.get("/export-data", async (req, res) => {
+  const { documentType, exportType, selectedFields } = req.query;
+
+  if (!documentType) {
+    return res.status(400).json({
+      error: true,
+      message: "Document type is required",
+    });
   }
 
-  res.send(
-    `Field "${field_name}" added successfully to document type "${documentType}".`
-  );
+  if (!exportType) {
+    return res.status(400).json({
+      error: true,
+      message: "Export type is required",
+    });
+  }
+
+  try {
+    const tableName = documentType.toLowerCase().replace(/\s+/g, "_");
+    const tableExists = await db.get(
+      `SELECT name 
+       FROM sqlite_master 
+       WHERE type='table' AND name=?`,
+      [tableName]
+    );
+
+    if (!tableExists) {
+      return res.status(404).json({
+        error: true,
+        message: "Invalid document type",
+      });
+    }
+
+    let fields = "*";
+    if (selectedFields) {
+      const fieldArray = selectedFields.split(",").map((field) => field.trim());
+      const tableInfo = await db.all(`PRAGMA table_info(${tableName})`);
+      const validFields = tableInfo.map((col) => col.name);
+
+      const invalidFields = fieldArray.filter(
+        (field) => !validFields.includes(field)
+      );
+      if (invalidFields.length > 0) {
+        return res.status(400).json({
+          error: true,
+          message: `Invalid fields: ${invalidFields.join(", ")}`,
+        });
+      }
+
+      fields = fieldArray.join(", ");
+    }
+
+    let query = "";
+    switch (exportType) {
+      case "all":
+        query = `SELECT ${fields} FROM ${tableName}`;
+        break;
+
+      case "filtered":
+        if (!selectedFields) {
+          return res.status(400).json({
+            error: true,
+            message: "Selected fields are required for filtered export",
+          });
+        }
+        query = `SELECT ${fields} FROM ${tableName}`;
+        break;
+
+      case "5records":
+        query = `SELECT ${fields} FROM ${tableName} LIMIT 5`;
+        break;
+
+      case "template":
+        const tableInfo = await db.all(`PRAGMA table_info(${tableName})`);
+        let template;
+        if (selectedFields) {
+          const fieldArray = selectedFields
+            .split(",")
+            .map((field) => field.trim());
+          template = tableInfo
+            .filter((col) => fieldArray.includes(col.name))
+            .map((col) => ({ [col.name]: "" }));
+        } else {
+          template = tableInfo.map((col) => ({ [col.name]: "" }));
+        }
+        return res.json({
+          error: false,
+          data: template,
+        });
+
+      default:
+        return res.status(400).json({
+          error: true,
+          message: "Invalid export type",
+        });
+    }
+
+    const data = await db.all(query);
+    if (data.length === 0) {
+      return res.json({
+        error: false,
+        message: "No data found",
+        data: [],
+      });
+    }
+
+    res.json({
+      error: false,
+      message: "Data exported successfully",
+      data: data,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: true,
+      message: "Internal server error",
+      details: error.message,
+    });
+  }
 });
